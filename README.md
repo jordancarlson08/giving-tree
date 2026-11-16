@@ -2,7 +2,7 @@
 
 The Grove Park 6th Ward Sub-for-Santa gift registry. Ward members browse the gifts that are still needed, claim one by entering their name, and get delivery instructions they can save to their calendar or clipboard.
 
-Live site: https://sub-for-santa-6th-ward.vercel.app (Vercel project `secret-santa`)
+Live site: https://giving-tree-6th-ward.vercel.app (Vercel project `giving-tree`). The old address, sub-for-santa-6th-ward.vercel.app, redirects there.
 
 ## How it works
 
@@ -31,7 +31,7 @@ The first tab must be named `Sheet1` (or change `SHEET_NAME` in `api/sheets.js`)
 
 Any other columns (for example `receipient`, `Delivered`) are fine and never leave the server. `sample-gifts.json` has example rows.
 
-The sheet must be shared, as an **Editor**, with the service account `sub-for-santa-sheets@sub-for-santa-6th-ward.iam.gserviceaccount.com`. The service account needs no IAM roles in Google Cloud.
+The sheet must be shared, as an **Editor**, with the service account `sub-for-santa-sheets@sub-for-santa-6th-ward.iam.gserviceaccount.com`. The service account needs no IAM roles in Google Cloud. (Its `sub-for-santa` names come from the Google Cloud project, whose ID can't be changed.)
 
 ## Local development
 
@@ -55,22 +55,21 @@ Local development uses the real spreadsheet, so claims made locally are real cla
 
 ## Deployment
 
-The site is deployed from this folder with the Vercel CLI to the `secret-santa` project:
+The `giving-tree` Vercel project is connected to this GitHub repo:
+
+- **Merging into `main` deploys production** automatically.
+- Every other branch you push gets a preview deployment, linked from its pull request. Previews are behind Vercel login; check their API with `vercel curl /api/sheets --deployment <deployment id>`.
+
+To use the Vercel CLI from this folder (for `vercel dev`, `vercel env`, or a manual `vercel --prod`), link it to the project once:
 
 ```bash
-vercel link --project secret-santa
+vercel link --project giving-tree
 ```
 
-```bash
-vercel --prod
-```
-
-Use `vercel` without `--prod` for a preview deployment. Previews are behind Vercel login; check their API with `vercel curl /api/sheets --deployment <deployment id>`.
-
-Environment variables on the `secret-santa` project:
+Environment variables on the `giving-tree` project:
 
 - `GOOGLE_SERVICE_ACCOUNT`: the service account key JSON. It's stored as **Sensitive**, so it can't be viewed in the dashboard or pulled; set it for Production and Preview only.
-- `ALLOWED_ORIGINS`: comma-separated extra origins allowed to call the API (for example the production domain). `localhost:3000` and the deployment's own URL are always allowed.
+- `ALLOWED_ORIGINS`: comma-separated extra origins allowed to call the API (set to `https://giving-tree-6th-ward.vercel.app`). `localhost:3000` and the deployment's own URL are always allowed.
 
 ## New season checklist
 
@@ -79,7 +78,7 @@ Environment variables on the `secret-santa` project:
 3. Update `DELIVER_BY` at the top of `src/App.jsx`. It drives the date in the instructions, the copied details and the calendar invite.
 4. Rotate the service account key: in Google Cloud console go to **IAM & Admin → Service Accounts → sub-for-santa-sheets → Keys**, create a new JSON key and delete the old one. Then update `.env.local` and the Sensitive `GOOGLE_SERVICE_ACCOUNT` variable in Vercel, and delete the downloaded key file.
 5. Run `npm audit` and update dependencies.
-6. Deploy with `vercel --prod`, then make one test claim and clear it in the sheet.
+6. Merge into `main` to deploy, then make one test claim on the live site and clear it in the sheet.
 
 ## Tech stack
 

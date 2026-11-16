@@ -11,6 +11,11 @@ const DELIVER_BY = { year: 2026, month: 12, day: 10 }
 const DELIVER_BY_LABEL = new Date(DELIVER_BY.year, DELIVER_BY.month - 1, DELIVER_BY.day)
   .toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
 
+// Browser storage keys. Claimed IDs are per season so last year's claims don't
+// show up as "Claimed by you" when the new sheet reuses row IDs.
+const STORAGE_USER_NAME = 'givingTree.userName'
+const STORAGE_CLAIMED_IDS = `givingTree.${DELIVER_BY.year}.claimedGiftIds`
+
 // The sheet's shouldWrap column may hold TRUE/FALSE (checkbox), yes/no, y/n, etc.
 // Returns true (wrap), false (don't wrap), or null (blank / unrecognized).
 const wrapPreference = (value) => {
@@ -66,7 +71,7 @@ function App() {
       
       // Auto-fill name input with saved username
       if (!abortController.signal.aborted) {
-        const savedUserName = localStorage.getItem('giftRegistryUserName')
+        const savedUserName = localStorage.getItem(STORAGE_USER_NAME)
         if (savedUserName) {
           setUserName(savedUserName)
           setClaimName(savedUserName)
@@ -83,29 +88,8 @@ function App() {
   }, [])
 
   const loadAllClaimedGifts = async (allGiftsData = null) => {
-    // Check for old localStorage format and migrate if needed
-    const oldClaimedGifts = localStorage.getItem('claimedGifts')
-    if (oldClaimedGifts) {
-      try {
-        const oldGifts = JSON.parse(oldClaimedGifts)
-        if (Array.isArray(oldGifts) && oldGifts.length > 0) {
-          // Migrate: extract IDs from old format
-          const migratedIds = oldGifts.map(gift => gift.id).filter(id => id)
-          if (migratedIds.length > 0) {
-            localStorage.setItem('claimedGiftIds', JSON.stringify(migratedIds))
-          }
-          // Remove old format
-          localStorage.removeItem('claimedGifts')
-        }
-      } catch (e) {
-        console.error('Error migrating old localStorage format:', e)
-        // If migration fails, remove old data
-        localStorage.removeItem('claimedGifts')
-      }
-    }
-
     // Load claimed gift IDs from localStorage
-    const savedGiftIds = localStorage.getItem('claimedGiftIds')
+    const savedGiftIds = localStorage.getItem(STORAGE_CLAIMED_IDS)
     if (!savedGiftIds) {
       setMyClaimedGifts([])
       return
@@ -149,9 +133,9 @@ function App() {
       // Update localStorage to remove unclaimed gifts
       if (validGiftIds.length !== giftIds.length) {
         if (validGiftIds.length === 0) {
-          localStorage.removeItem('claimedGiftIds')
+          localStorage.removeItem(STORAGE_CLAIMED_IDS)
         } else {
-          localStorage.setItem('claimedGiftIds', JSON.stringify(validGiftIds))
+          localStorage.setItem(STORAGE_CLAIMED_IDS, JSON.stringify(validGiftIds))
         }
       }
 
@@ -167,17 +151,17 @@ function App() {
   }
 
   const saveClaimedGift = (giftId, name, allGiftsData = null) => {
-    const savedGiftIds = localStorage.getItem('claimedGiftIds')
+    const savedGiftIds = localStorage.getItem(STORAGE_CLAIMED_IDS)
     let claimedGiftIds = savedGiftIds ? JSON.parse(savedGiftIds) : []
     
     // Add the new gift ID if it's not already in the list
     if (!claimedGiftIds.includes(giftId)) {
       claimedGiftIds.push(giftId)
-      localStorage.setItem('claimedGiftIds', JSON.stringify(claimedGiftIds))
+      localStorage.setItem(STORAGE_CLAIMED_IDS, JSON.stringify(claimedGiftIds))
     }
     
     // Save the user's name for auto-fill
-    localStorage.setItem('giftRegistryUserName', name)
+    localStorage.setItem(STORAGE_USER_NAME, name)
     setUserName(name)
     
     // If we have all gifts data, update claimed gifts directly without another API call
@@ -322,15 +306,15 @@ function App() {
       `${confirmedGift.other ? `Notes: ${confirmedGift.other}\n` : ''}` +
       `${confirmedGift.url ? `Product Link: ${confirmedGift.url}\n` : ''}`
     
-    const summary = `Deliver ${confirmedGift.item} - Sub-for-Santa`
+    const summary = `Deliver ${confirmedGift.item} - Giving Tree`
     const location = confirmedGift.deliverTo || 'TBD'
     
     const icsContent = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
-      'PRODID:-//Sub-for-Santa//Gift Registry//EN',
+      'PRODID:-//Grove Park 6th Ward//Giving Tree//EN',
       'BEGIN:VEVENT',
-      `UID:${Date.now()}@subforsanta`,
+      `UID:${Date.now()}@giving-tree-6th-ward.vercel.app`,
       `DTSTAMP:${formatICSDate(new Date())}`,
       `DTSTART;VALUE=DATE:${startDate}`,
       `DTEND;VALUE=DATE:${endDate}`,
@@ -344,7 +328,7 @@ function App() {
     const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
-    link.download = `sub-for-santa-${confirmedGift.item.replace(/\s+/g, '-')}.ics`
+    link.download = `giving-tree-${confirmedGift.item.replace(/\s+/g, '-')}.ics`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -355,7 +339,7 @@ function App() {
     
     const wrapStatus = wrapPreference(confirmedGift.shouldWrap) === true ? 'wrapped' : 'unwrapped'
     
-    const details = `Gift Details - Sub-for-Santa
+    const details = `Gift Details - Giving Tree
 
 Item: ${confirmedGift.item}
 Deliver to: ${confirmedGift.deliverTo || 'N/A'}
@@ -382,7 +366,7 @@ Claimed by: ${confirmedGift.claimedBy || userName}`
   const handleClaimClick = (giftId) => {
     setClaimingId(giftId)
     // Auto-fill with saved username if available
-    const savedUserName = localStorage.getItem('giftRegistryUserName')
+    const savedUserName = localStorage.getItem(STORAGE_USER_NAME)
     setClaimName(savedUserName || '')
   }
 
