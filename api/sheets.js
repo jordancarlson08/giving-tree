@@ -1,10 +1,12 @@
 import { google } from 'googleapis';
 
-const SPREADSHEET_ID = '1HgpTFqxJ-foW4o_4GnwVjhGNf73GZZXPS9Nxy5BtYPg';
+const SPREADSHEET_ID = '1VuSew17HE4-WdRfl3SAZKgjF1wS-Sr6DSKrm2tgRRR4';
 const SHEET_NAME = 'Sheet1'; // Change if your sheet has a different name
 
-// Only allow updates to these fields
-const ALLOWED_UPDATE_FIELDS = ['claimedBy', 'claimedDate'];
+// Columns returned to the public page. Anything else in the sheet (recipient,
+// addresses, internal notes, claimer names) is never sent to the browser.
+const PUBLIC_FIELDS = ['id', 'item', 'shouldWrap', 'other', 'url', 'previewUrl', 'deliverTo'];
+const MAX_NAME_LENGTH = 200;
 
 // Rate limiting: simple in-memory store (resets on serverless function restart)
 const rateLimitStore = new Map();
@@ -56,18 +58,16 @@ function sanitizeSheetValue(value) {
   if (typeof value !== 'string') {
     value = String(value);
   }
-  
+
+  // Limit length to prevent abuse (before prefixing, so every value is capped)
+  value = value.trim().slice(0, MAX_NAME_LENGTH);
+
   // Prevent formula injection by prefixing dangerous characters with single quote
   // Google Sheets will treat it as text if it starts with a quote
-  if (value.startsWith('=') || value.startsWith('+') || value.startsWith('-') || value.startsWith('@')) {
+  if (/^[=+\-@]/.test(value)) {
     return "'" + value;
   }
-  
-  // Limit length to prevent abuse
-  if (value.length > 200) {
-    return value.slice(0, 200);
-  }
-  
+
   return value;
 }
 
@@ -80,29 +80,16 @@ function validateId(id) {
   return /^[a-zA-Z0-9_-]+$/.test(id.trim());
 }
 
-// Get credentials from environment variable (for Vercel)
-// For local development, try reading from file if env var not set
-async function getCredentials() {
-  if (process.env.GOOGLE_SERVICE_ACCOUNT) {
-    try {
-      return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
-    } catch (e) {
-      throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT');
-    }
+// Service account JSON comes from the GOOGLE_SERVICE_ACCOUNT env var
+// (Vercel project settings in production, .env.local for `vercel dev`)
+function getCredentials() {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT not set');
   }
-  
-  // Try reading from file for local development
   try {
-    const fs = await import('fs');
-    const path = await import('path');
-    const { fileURLToPath } = await import('url');
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-    const credentialsPath = path.join(__dirname, '..', 'sub-for-santa-6th-ward-addf2efcb33a.json');
-    const fileContents = fs.readFileSync(credentialsPath, 'utf8');
-    return JSON.parse(fileContents);
+    return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
   } catch (e) {
-    throw new Error('GOOGLE_SERVICE_ACCOUNT not set and file not found');
+    throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT');
   }
 }
 
@@ -151,8 +138,9 @@ export default async function handler(req, res) {
     const credentials = await getCredentials();
     
     // Authenticate with service account
-    const auth = new google.auth.GoogleAuth({
-      credentials,
+    const auth = new google.auth.JWT({
+      email: credentials.client_email,
+      key: credentials.private_key,
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 
@@ -172,14 +160,17 @@ export default async function handler(req, res) {
 
       const headers = rows[0];
       const gifts = rows.slice(1).map((row, index) => {
-        const gift = rowToObject(headers, row);
+        const record = rowToObject(headers, row);
+        const gift = {};
+        PUBLIC_FIELDS.forEach(field => {
+          if (record[field] !== undefined) gift[field] = record[field];
+        });
         // Use row number as ID if no ID column
         if (!gift.id) {
           gift.id = (index + 2).toString(); // +2 because index is 0-based and row 1 is headers
         }
-        // Remove recipient field for privacy
-        delete gift.receipient;
-        delete gift.recipient; // Handle both spellings
+        // Expose only whether the gift is taken, never who took it
+        gift.claimed = String(record.claimedBy || '').trim() !== '';
         return gift;
       });
 
@@ -201,17 +192,15 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid or missing ID' });
       }
 
-      // Whitelist only allowed fields
-      const sanitizedData = {};
-      Object.keys(data).forEach(key => {
-        if (ALLOWED_UPDATE_FIELDS.includes(key)) {
-          sanitizedData[key] = sanitizeSheetValue(data[key]);
-        }
-      });
-
-      if (Object.keys(sanitizedData).length === 0) {
-        return res.status(400).json({ error: 'No valid fields to update' });
+      // Only the claimer's name comes from the client; it must be non-empty
+      // (an empty name would "unclaim" the gift). The date is set server-side.
+      if (typeof data.claimedBy !== 'string' || data.claimedBy.trim() === '') {
+        return res.status(400).json({ error: 'Name is required' });
       }
+      const sanitizedData = {
+        claimedBy: sanitizeSheetValue(data.claimedBy),
+        claimedDate: new Date().toISOString(),
+      };
 
       // Get all rows to find the one to update
       const response = await sheets.spreadsheets.values.get({
@@ -242,8 +231,18 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: 'Gift not found' });
       }
 
+      // Refuse to overwrite an existing claim
+      const claimedByIndex = headers.indexOf('claimedBy');
+      if (claimedByIndex === -1) {
+        return res.status(500).json({ error: 'claimedBy column not found in sheet' });
+      }
+      if (String(rows[rowIndex][claimedByIndex] || '').trim() !== '') {
+        return res.status(409).json({ error: 'This gift has already been claimed' });
+      }
+
       // Build updates only for whitelisted fields
       const updates = [];
+      let claimedByRange = null;
       Object.keys(sanitizedData).forEach(key => {
         const colIndex = headers.indexOf(key);
         if (colIndex !== -1) {
@@ -255,8 +254,10 @@ export default async function handler(req, res) {
             colNum = Math.floor(colNum / 26) - 1;
           }
           
+          const range = `${SHEET_NAME}!${colLetter}${rowIndex + 1}`;
+          if (key === 'claimedBy') claimedByRange = range;
           updates.push({
-            range: `${SHEET_NAME}!${colLetter}${rowIndex + 1}`,
+            range,
             values: [[sanitizedData[key]]],
           });
         }
@@ -273,6 +274,17 @@ export default async function handler(req, res) {
           data: updates,
         },
       });
+
+      // Two near-simultaneous claims can both pass the check above. Read the
+      // cell back: whoever's name is there won; everyone else gets a 409.
+      const verify = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: claimedByRange,
+      });
+      const storedName = String(verify.data.values?.[0]?.[0] || '').trim();
+      if (storedName !== sanitizedData.claimedBy.replace(/^'/, '')) {
+        return res.status(409).json({ error: 'This gift has already been claimed' });
+      }
 
       return res.json({ success: true });
     }

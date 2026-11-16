@@ -2,3 +2,6 @@ node_modules
 dist
 .vite
 
+# Never upload local secrets
+.env*
+*.pem
