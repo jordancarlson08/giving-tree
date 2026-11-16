@@ -11,6 +11,15 @@ const DELIVER_BY = { year: 2026, month: 12, day: 10 }
 const DELIVER_BY_LABEL = new Date(DELIVER_BY.year, DELIVER_BY.month - 1, DELIVER_BY.day)
   .toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
 
+// The sheet's shouldWrap column may hold TRUE/FALSE (checkbox), yes/no, y/n, etc.
+// Returns true (wrap), false (don't wrap), or null (blank / unrecognized).
+const wrapPreference = (value) => {
+  const v = String(value ?? '').trim().toLowerCase()
+  if (['true', 'yes', 'y', 'x', '1'].includes(v)) return true
+  if (['false', 'no', 'n', '0'].includes(v)) return false
+  return null
+}
+
 function App() {
   const [gifts, setGifts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -295,7 +304,7 @@ function App() {
   const generateCalendarEvent = () => {
     if (!confirmedGift) return
     
-    const wrapStatus = confirmedGift.shouldWrap === 'TRUE' ? 'wrapped' : 'unwrapped'
+    const wrapStatus = wrapPreference(confirmedGift.shouldWrap) === true ? 'wrapped' : 'unwrapped'
     // Format timestamp for ICS (YYYYMMDDTHHMMSSZ)
     const formatICSDate = (date) => {
       return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
@@ -344,7 +353,7 @@ function App() {
   const copyDetailsToClipboard = async () => {
     if (!confirmedGift) return
     
-    const wrapStatus = confirmedGift.shouldWrap === 'TRUE' ? 'wrapped' : 'unwrapped'
+    const wrapStatus = wrapPreference(confirmedGift.shouldWrap) === true ? 'wrapped' : 'unwrapped'
     
     const details = `Gift Details - Sub-for-Santa
 
@@ -434,7 +443,7 @@ Claimed by: ${confirmedGift.claimedBy || userName}`
   const ConfirmationModal = () => {
     if (!confirmedGift) return null
     
-    const wrapStatus = confirmedGift.shouldWrap === 'TRUE' ? 'wrapped' : 'unwrapped'
+    const wrapStatus = wrapPreference(confirmedGift.shouldWrap) === true ? 'wrapped' : 'unwrapped'
     
     return (
       <div className="modal-overlay" onClick={closeConfirmation}>
@@ -469,11 +478,11 @@ Claimed by: ${confirmedGift.claimedBy || userName}`
             <div className="confirmed-gift-details">
               <h3 className="confirmed-item-name">{confirmedGift.item}</h3>
               
-              {confirmedGift.shouldWrap === 'TRUE' && (
+              {wrapPreference(confirmedGift.shouldWrap) === true && (
                 <p className="gift-badge">🎀 Needs wrapping</p>
               )}
               
-              {confirmedGift.shouldWrap === 'FALSE' && (
+              {wrapPreference(confirmedGift.shouldWrap) === false && (
                 <p className="gift-badge no-wrap">📦 Do not wrap</p>
               )}
               
@@ -599,11 +608,11 @@ Claimed by: ${confirmedGift.claimedBy || userName}`
                 <div className="gift-content">
                   <h2 className="gift-title">{gift.item}</h2>
                   
-                  {gift.shouldWrap === 'TRUE' && (
+                  {wrapPreference(gift.shouldWrap) === true && (
                     <p className="gift-badge">🎀 Needs wrapping</p>
                   )}
                   
-                  {gift.shouldWrap === 'FALSE' && (
+                  {wrapPreference(gift.shouldWrap) === false && (
                     <p className="gift-badge no-wrap">📦 Do not wrap</p>
                   )}
                   
@@ -682,11 +691,11 @@ Claimed by: ${confirmedGift.claimedBy || userName}`
               <div className="gift-content">
                 <h2 className="gift-title">{gift.item}</h2>
                 
-                {gift.shouldWrap === 'TRUE' && (
+                {wrapPreference(gift.shouldWrap) === true && (
                   <p className="gift-badge">🎀 Needs wrapping</p>
                 )}
                 
-                {gift.shouldWrap === 'FALSE' && (
+                {wrapPreference(gift.shouldWrap) === false && (
                   <p className="gift-badge no-wrap">📦 Do not wrap</p>
                 )}
                 

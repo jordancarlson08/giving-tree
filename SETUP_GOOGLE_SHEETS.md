@@ -56,7 +56,7 @@ fetch('/api/sheets?id=1', {
 
 - The API assumes your Google Sheet has headers in the first row
 - Column names are case-sensitive
-- Required columns: `id`, `item`, `claimedBy`, `claimedDate`. Also used by the page: `shouldWrap` (TRUE/FALSE), `other`, `url`, `previewUrl`, `deliverTo`
+- Required columns: `id`, `item`, `claimedBy`, `claimedDate`. Also used by the page: `shouldWrap` (TRUE/FALSE or yes/no), `other`, `url`, `previewUrl`, `deliverTo`
 - Only those page columns plus a `claimed` true/false flag are returned by `GET`; any other columns (recipient, delivery tracking, claimer names) stay private
 - Claiming an already-claimed gift returns `409`
 - The sheet name is set to "Sheet1" by default - update `SHEET_NAME` in `api/sheets.js` if different
