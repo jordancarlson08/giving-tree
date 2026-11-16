@@ -6,6 +6,11 @@ import './App.css'
 // For production, this will automatically work with Vercel
 const API_URL = '/api/sheets'
 
+// Delivery deadline — update this each season. Month is 1-based (12 = December).
+const DELIVER_BY = { year: 2026, month: 12, day: 10 }
+const DELIVER_BY_LABEL = new Date(DELIVER_BY.year, DELIVER_BY.month - 1, DELIVER_BY.day)
+  .toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
+
 function App() {
   const [gifts, setGifts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -31,7 +36,7 @@ function App() {
         const allGifts = await response.json()
         
         // Process unclaimed gifts
-        const unclaimedGifts = allGifts.filter(gift => !gift.claimedBy || gift.claimedBy.trim() === '')
+        const unclaimedGifts = allGifts.filter(gift => !gift.claimed)
         setGifts(unclaimedGifts)
         
         // Process claimed gifts using the same data
@@ -121,8 +126,8 @@ function App() {
       for (const giftId of giftIds) {
         const gift = allGifts.find(g => g.id === giftId)
         if (gift) {
-          // If claimedBy is empty, remove it from localStorage (gift was unclaimed)
-          if (!gift.claimedBy || gift.claimedBy.trim() === '') {
+          // If the gift is no longer claimed, remove it from localStorage
+          if (!gift.claimed) {
             // Don't add to claimedGifts, and don't add ID to validGiftIds
             continue
           }
@@ -171,7 +176,7 @@ function App() {
       const claimedGifts = []
       for (const id of claimedGiftIds) {
         const gift = allGiftsData.find(g => g.id === id)
-        if (gift && gift.claimedBy && gift.claimedBy.trim() !== '') {
+        if (gift && gift.claimed) {
           claimedGifts.push(gift)
         }
       }
@@ -193,8 +198,8 @@ function App() {
         throw new Error('Failed to fetch gifts')
       }
       const data = await response.json()
-      // Filter out claimed gifts (where claimedBy is not empty)
-      const unclaimedGifts = data.filter(gift => !gift.claimedBy || gift.claimedBy.trim() === '')
+      // Filter out claimed gifts
+      const unclaimedGifts = data.filter(gift => !gift.claimed)
       setGifts(unclaimedGifts)
       return data // Return all gifts for use in claimGift
     } catch (err) {
@@ -218,14 +223,10 @@ function App() {
       setClaimingId(giftId)
       const giftToClaim = gifts.find(g => g.id === giftId)
       
-      // Get current timestamp in ISO format
-      const claimedDate = new Date().toISOString()
-      
       // Show confirmation immediately with local data (optimistic update)
       const optimisticGift = {
         ...giftToClaim,
-        claimedBy: name.trim(),
-        claimedDate: claimedDate
+        claimedBy: name.trim()
       }
       setConfirmedGift(optimisticGift)
       
@@ -242,12 +243,16 @@ function App() {
         },
         body: JSON.stringify({
           data: {
-            claimedBy: name.trim(),
-            claimedDate: claimedDate
+            claimedBy: name.trim()
           }
         })
       })
 
+      if (response.status === 409) {
+        const conflict = new Error('Someone else just claimed this gift. Please pick another one.')
+        conflict.isConflict = true
+        throw conflict
+      }
       if (!response.ok) {
         throw new Error('Failed to claim gift')
       }
@@ -260,7 +265,7 @@ function App() {
         // Update confirmed gift with fresh data from API
         const updatedGift = allGiftsData.find(g => g.id === giftId)
         if (updatedGift) {
-          setConfirmedGift(updatedGift)
+          setConfirmedGift({ ...updatedGift, claimedBy: name.trim() })
         }
         
         // Update claimed gifts list using the fetched data
@@ -272,12 +277,18 @@ function App() {
     } catch (err) {
       // Revert optimistic update on error
       setConfirmedGift(null)
+      setClaimingId(null)
+      console.error('Error claiming gift:', err)
+      if (err.isConflict) {
+        // Gift was taken by someone else: refresh the list (it drops out) and keep browsing
+        await fetchGifts(false)
+        alert(err.message)
+        return
+      }
       // Re-add gift to list
       await fetchGifts(false)
       setError(err.message)
-      console.error('Error claiming gift:', err)
       alert('Failed to claim gift. Please try again.')
-      setClaimingId(null)
     }
   }
 
@@ -285,15 +296,16 @@ function App() {
     if (!confirmedGift) return
     
     const wrapStatus = confirmedGift.shouldWrap === 'TRUE' ? 'wrapped' : 'unwrapped'
-    const deliverBy = new Date('2024-12-10')
-    
-    // Format date for ICS (YYYYMMDDTHHMMSS)
+    // Format timestamp for ICS (YYYYMMDDTHHMMSSZ)
     const formatICSDate = (date) => {
       return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
     }
-    
-    const startDate = formatICSDate(deliverBy)
-    const endDate = formatICSDate(new Date(deliverBy.getTime() + 60 * 60 * 1000)) // 1 hour event
+    // Format a calendar date for an all-day ICS event (YYYYMMDD), timezone-independent
+    const formatICSDay = (d) => d.toISOString().slice(0, 10).replace(/-/g, '')
+
+    const deliverByUTC = new Date(Date.UTC(DELIVER_BY.year, DELIVER_BY.month - 1, DELIVER_BY.day))
+    const startDate = formatICSDay(deliverByUTC)
+    const endDate = formatICSDay(new Date(deliverByUTC.getTime() + 24 * 60 * 60 * 1000))
     
     const description = `Gift Item: ${confirmedGift.item}\n` +
       `Deliver to: ${confirmedGift.deliverTo || 'N/A'}\n` +
@@ -311,8 +323,8 @@ function App() {
       'BEGIN:VEVENT',
       `UID:${Date.now()}@subforsanta`,
       `DTSTAMP:${formatICSDate(new Date())}`,
-      `DTSTART:${startDate}`,
-      `DTEND:${endDate}`,
+      `DTSTART;VALUE=DATE:${startDate}`,
+      `DTEND;VALUE=DATE:${endDate}`,
       `SUMMARY:${summary}`,
       `DESCRIPTION:${description.replace(/\n/g, '\\n')}`,
       `LOCATION:${location}`,
@@ -338,12 +350,12 @@ function App() {
 
 Item: ${confirmedGift.item}
 Deliver to: ${confirmedGift.deliverTo || 'N/A'}
-Please deliver the ${wrapStatus} gift to ${confirmedGift.deliverTo || 'the specified location'} by December 10th at the latest.
+Please deliver the ${wrapStatus} gift to ${confirmedGift.deliverTo || 'the specified location'} by ${DELIVER_BY_LABEL} at the latest.
 
 ${confirmedGift.other ? `Additional Notes: ${confirmedGift.other}\n` : ''}
 ${confirmedGift.url ? `Product Link: ${confirmedGift.url}` : ''}
 
-Claimed by: ${confirmedGift.claimedBy}`
+Claimed by: ${confirmedGift.claimedBy || userName}`
     
     try {
       await navigator.clipboard.writeText(details)
@@ -489,7 +501,7 @@ Claimed by: ${confirmedGift.claimedBy}`
               <div className="delivery-instructions">
                 <h4>📦 Delivery Instructions</h4>
                 <p className="delivery-message">
-                  Please deliver the <strong>{wrapStatus}</strong> gift to <strong>{confirmedGift.deliverTo || 'the specified location'}</strong> by <strong>December 10th</strong> at the latest.
+                  Please deliver the <strong>{wrapStatus}</strong> gift to <strong>{confirmedGift.deliverTo || 'the specified location'}</strong> by <strong>{DELIVER_BY_LABEL}</strong> at the latest.
                 </p>
               </div>
             </div>
